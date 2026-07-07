@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>건설현장 조회 시스템</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Noto Sans KR', sans-serif; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { background-color: #eff6ff; }
+    th.sort-asc::after { content: ' ↑'; color: #2563eb; }
+    th.sort-desc::after { content: ' ↓'; color: #2563eb; }
+    th.sort-active { background-color: #dbeafe !important; color: #1d4ed8; }
+    .table-wrap { overflow-x: auto; }
+    td, th { white-space: nowrap; }
+    .fade-in { animation: fadeIn 0.2s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .spinner { animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+
+<!-- ====== 헤더 ====== -->
+<header class="bg-blue-700 text-white shadow-lg sticky top-0 z-40">
+  <div class="max-w-screen-2xl mx-auto px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <span class="text-2xl">🏗️</span>
+      <div>
+        <h1 class="text-lg font-bold leading-tight">건설현장 조회 시스템</h1>
+        <p class="text-blue-200 text-xs">국토교통부 건축인허가 정보 기반</p>
+      </div>
+    </div>
+    <button onclick="openSettings()" class="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+      ⚙️ API 설정
+    </button>
+  </div>
+</header>
+
+<!-- ====== 설정 모달 ====== -->
+<div id="settingsModal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-lg">
+    <h2 class="text-lg font-bold mb-1">⚙️ API 키 설정</h2>
+    <p class="text-sm text-gray-500 mb-4">공공데이터포털(data.go.kr)에서 발급받은 인증키를 입력하세요.</p>
+    <div class="mb-2">
+      <label class="block text-sm font-medium text-gray-700 mb-1">인증키 <span class="text-red-500">*</span></label>
+      <input id="apiKeyInput" type="text" placeholder="인코딩된 인증키 붙여넣기"
+        class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono">
+    </div>
+    <p class="text-xs text-gray-400 mb-5">
+      신청 경로: data.go.kr → 검색 <strong>"국토교통부_건축HUB_건축인허가정보"</strong> → 활용신청 → 마이페이지에서 <strong>인코딩된 일반 인증키</strong> 복사
+    </p>
+    <div class="flex gap-2 justify-end">
+      <button onclick="closeSettings()" class="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">취소</button>
+      <button onclick="saveApiKey()" class="px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ====== 메인 ====== -->
+<main class="max-w-screen-2xl mx-auto px-4 py-5 space-y-4">
+
+  <!-- 필터 패널 -->
+  <div class="bg-white rounded-2xl shadow-sm p-5">
+    <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">검색 필터</h2>
+    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+
+      <!-- 착공예정일 -->
+      <div class="sm:col-span-2">
+        <label class="block text-sm font-medium text-gray-700 mb-1">착공예정일</label>
+        <div class="flex items-center gap-2">
+          <input type="date" id="startDate" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <span class="text-gray-400 flex-shrink-0">~</span>
+          <input type="date" id="endDate" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+      </div>
+
+      <!-- 지역 -->
+      <div class="sm:col-span-2">
+        <label class="block text-sm font-medium text-gray-700 mb-1">지역 <span class="text-xs text-gray-400">(시/도만 선택 시 전체 시/군/구 검색)</span></label>
+        <div class="flex gap-2">
+          <select id="sidoSelect" onchange="onSidoChange()" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+            <option value="">시/도 선택</option>
+          </select>
+          <select id="sigunguSelect" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+            <option value="">전체 시/군/구</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 연면적 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">연면적 (㎡)</label>
+        <div class="flex items-center gap-2">
+          <input type="number" id="minArea" placeholder="최소" min="0"
+            class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <span class="text-gray-400 flex-shrink-0">~</span>
+          <input type="number" id="maxArea" placeholder="최대" min="0"
+            class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+      </div>
+
+      <!-- 주용도 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">주용도</label>
+        <div class="relative" id="purpsWrap">
+          <button type="button" onclick="toggleDD('purpsDD')"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-left flex justify-between items-center bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <span id="purpsLabel" class="text-gray-400 truncate">전체</span>
+            <span class="text-gray-400 ml-1 flex-shrink-0">▾</span>
+          </button>
+          <div id="purpsDD" class="hidden absolute z-30 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-y-auto">
+          </div>
+        </div>
+      </div>
+
+      <!-- 허가구분 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">허가구분</label>
+        <div class="relative" id="archGbWrap">
+          <button type="button" onclick="toggleDD('archGbDD')"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-left flex justify-between items-center bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <span id="archGbLabel" class="text-gray-400 truncate">전체</span>
+            <span class="text-gray-400 ml-1 flex-shrink-0">▾</span>
+          </button>
+          <div id="archGbDD" class="hidden absolute z-30 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 버튼 -->
+    <div class="flex flex-wrap gap-3 mt-5 pt-4 border-t border-gray-100">
+      <button onclick="doSearch()" class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-6 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-sm">
+        🔍 검색
+      </button>
+      <button onclick="resetFilters()" class="border border-gray-300 hover:bg-gray-50 text-gray-600 px-4 py-2.5 rounded-lg text-sm transition-colors">
+        ↺ 초기화
+      </button>
+      <button onclick="toggleFavView()" id="favToggleBtn"
+        class="border border-gray-300 hover:bg-yellow-50 text-gray-600 px-4 py-2.5 rounded-lg text-sm transition-colors ml-auto">
+        ⭐ 즐겨찾기 보기
+      </button>
+    </div>
+  </div>
+
+  <!-- 결과 패널 -->
+  <div class="bg-white rounded-2xl shadow-sm p-5">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="text-base font-bold text-gray-800" id="resultTitle">검색 결과</h2>
+        <p class="text-sm text-gray-400 mt-0.5" id="resultInfo">검색 버튼을 눌러 조회하세요.</p>
+      </div>
+      <button onclick="exportExcel()" id="excelBtn"
+        class="hidden bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
+        📥 엑셀 내보내기
+      </button>
+    </div>
+
+    <!-- 로딩 -->
+    <div id="loadingDiv" class="hidden py-16 flex flex-col items-center gap-3 text-gray-400">
+      <div class="w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full spinner"></div>
+      <p id="loadingMsg" class="text-sm">데이터를 불러오는 중...</p>
+    </div>
+
+    <!-- 오류 -->
+    <div id="errorDiv" class="hidden py-12 text-center">
+      <p class="text-red-500 text-sm font-medium" id="errorMsg"></p>
+      <p class="text-gray-400 text-xs mt-1">API 키 설정을 확인하거나 잠시 후 다시 시도해주세요.</p>
+    </div>
+
+    <!-- 빈 결과 -->
+    <div id="emptyDiv" class="hidden py-16 text-center text-gray-400">
+      <p class="text-3xl mb-3">🔍</p>
+      <p class="text-sm">조건에 맞는 현장이 없습니다.</p>
+    </div>
+
+    <!-- 테이블 -->
+    <div id="tableWrap" class="hidden fade-in">
+      <div class="table-wrap rounded-xl border border-gray-200">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-gray-50 border-b border-gray-200 text-gray-600 text-xs">
+              <th class="px-3 py-3 text-center w-10">⭐</th>
+              <th class="px-3 py-3 text-left sortable" data-key="bldNm">건물명</th>
+              <th class="px-3 py-3 text-left sortable" data-key="platPlc">주소</th>
+              <th class="px-3 py-3 text-center sortable" data-key="stcnsSchedYmd">착공예정일</th>
+              <th class="px-3 py-3 text-center sortable" data-key="archPermYmd">건축허가일</th>
+              <th class="px-3 py-3 text-center sortable" data-key="useAprYmd">사용승인일</th>
+              <th class="px-3 py-3 text-center sortable" data-key="archGbCdNm">허가구분</th>
+              <th class="px-3 py-3 text-left sortable" data-key="mainPurpsCdNm">주용도</th>
+              <th class="px-3 py-3 text-right sortable" data-key="totArea">연면적(㎡)</th>
+              <th class="px-3 py-3 text-left sortable" data-key="mainStrctCdNm">주구조</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody" class="divide-y divide-gray-100"></tbody>
+        </table>
+      </div>
+      <p class="text-xs text-gray-400 mt-2 text-right" id="pageInfo"></p>
+    </div>
+
+  </div>
+</main>
+
+<script>
+// ───────────────────────────────────────────
+// 공통 데이터
+// ───────────────────────────────────────────
+const REGIONS = {
+  "11":{"name":"서울특별시","d":[{c:"11110",n:"종로구"},{c:"11140",n:"중구"},{c:"11170",n:"용산구"},{c:"11200",n:"성동구"},{c:"11215",n:"광진구"},{c:"11230",n:"동대문구"},{c:"11260",n:"중랑구"},{c:"11290",n:"성북구"},{c:"11305",n:"강북구"},{c:"11320",n:"도봉구"},{c:"11350",n:"노원구"},{c:"11380",n:"은평구"},{c:"11410",n:"서대문구"},{c:"11440",n:"마포구"},{c:"11470",n:"양천구"},{c:"11500",n:"강서구"},{c:"11530",n:"구로구"},{c:"11545",n:"금천구"},{c:"11560",n:"영등포구"},{c:"11590",n:"동작구"},{c:"11620",n:"관악구"},{c:"11650",n:"서초구"},{c:"11680",n:"강남구"},{c:"11710",n:"송파구"},{c:"11740",n:"강동구"}]},
+  "26":{"name":"부산광역시","d":[{c:"26110",n:"중구"},{c:"26140",n:"서구"},{c:"26170",n:"동구"},{c:"26200",n:"영도구"},{c:"26230",n:"부산진구"},{c:"26260",n:"동래구"},{c:"26290",n:"남구"},{c:"26320",n:"북구"},{c:"26350",n:"해운대구"},{c:"26380",n:"사하구"},{c:"26410",n:"금정구"},{c:"26440",n:"강서구"},{c:"26470",n:"연제구"},{c:"26500",n:"수영구"},{c:"26530",n:"사상구"},{c:"26710",n:"기장군"}]},
+  "27":{"name":"대구광역시","d":[{c:"27110",n:"중구"},{c:"27140",n:"동구"},{c:"27170",n:"서구"},{c:"27200",n:"남구"},{c:"27230",n:"북구"},{c:"27260",n:"수성구"},{c:"27290",n:"달서구"},{c:"27710",n:"달성군"}]},
+  "28":{"name":"인천광역시","d":[{c:"28110",n:"중구"},{c:"28140",n:"동구"},{c:"28177",n:"미추홀구"},{c:"28185",n:"연수구"},{c:"28200",n:"남동구"},{c:"28237",n:"부평구"},{c:"28245",n:"계양구"},{c:"28260",n:"서구"},{c:"28710",n:"강화군"},{c:"28720",n:"옹진군"}]},
+  "29":{"name":"광주광역시","d":[{c:"29110",n:"동구"},{c:"29140",n:"서구"},{c:"29155",n:"남구"},{c:"29170",n:"북구"},{c:"29200",n:"광산구"}]},
+  "30":{"name":"대전광역시","d":[{c:"30110",n:"동구"},{c:"30140",n:"중구"},{c:"30170",n:"서구"},{c:"30200",n:"유성구"},{c:"30230",n:"대덕구"}]},
+  "31":{"name":"울산광역시","d":[{c:"31110",n:"중구"},{c:"31140",n:"남구"},{c:"31170",n:"동구"},{c:"31200",n:"북구"},{c:"31710",n:"울주군"}]},
+  "36":{"name":"세종특별자치시","d":[{c:"36110",n:"세종시"}]},
+  "41":{"name":"경기도","d":[{c:"41111",n:"수원시 장안구"},{c:"41113",n:"수원시 권선구"},{c:"41115",n:"수원시 팔달구"},{c:"41117",n:"수원시 영통구"},{c:"41131",n:"성남시 수정구"},{c:"41133",n:"성남시 중원구"},{c:"41135",n:"성남시 분당구"},{c:"41150",n:"의정부시"},{c:"41171",n:"안양시 만안구"},{c:"41173",n:"안양시 동안구"},{c:"41190",n:"부천시"},{c:"41210",n:"광명시"},{c:"41220",n:"평택시"},{c:"41250",n:"동두천시"},{c:"41271",n:"안산시 상록구"},{c:"41273",n:"안산시 단원구"},{c:"41281",n:"고양시 덕양구"},{c:"41285",n:"고양시 일산동구"},{c:"41287",n:"고양시 일산서구"},{c:"41290",n:"과천시"},{c:"41310",n:"구리시"},{c:"41360",n:"남양주시"},{c:"41370",n:"오산시"},{c:"41390",n:"시흥시"},{c:"41410",n:"군포시"},{c:"41430",n:"의왕시"},{c:"41450",n:"하남시"},{c:"41461",n:"용인시 처인구"},{c:"41463",n:"용인시 기흥구"},{c:"41465",n:"용인시 수지구"},{c:"41480",n:"파주시"},{c:"41500",n:"이천시"},{c:"41550",n:"안성시"},{c:"41570",n:"김포시"},{c:"41590",n:"화성시"},{c:"41610",n:"광주시"},{c:"41630",n:"양주시"},{c:"41650",n:"포천시"},{c:"41670",n:"여주시"},{c:"41800",n:"연천군"},{c:"41820",n:"가평군"},{c:"41830",n:"양평군"}]},
+  "42":{"name":"강원특별자치도","d":[{c:"42110",n:"춘천시"},{c:"42130",n:"원주시"},{c:"42150",n:"강릉시"},{c:"42170",n:"동해시"},{c:"42190",n:"태백시"},{c:"42210",n:"속초시"},{c:"42230",n:"삼척시"},{c:"42720",n:"홍천군"},{c:"42730",n:"횡성군"},{c:"42750",n:"영월군"},{c:"42760",n:"평창군"},{c:"42770",n:"정선군"},{c:"42780",n:"철원군"},{c:"42790",n:"화천군"},{c:"42800",n:"양구군"},{c:"42810",n:"인제군"},{c:"42820",n:"고성군"},{c:"42830",n:"양양군"}]},
+  "43":{"name":"충청북도","d":[{c:"43110",n:"청주시 상당구"},{c:"43111",n:"청주시 서원구"},{c:"43112",n:"청주시 흥덕구"},{c:"43113",n:"청주시 청원구"},{c:"43130",n:"충주시"},{c:"43150",n:"제천시"},{c:"43720",n:"보은군"},{c:"43730",n:"옥천군"},{c:"43740",n:"영동군"},{c:"43745",n:"증평군"},{c:"43750",n:"진천군"},{c:"43760",n:"괴산군"},{c:"43770",n:"음성군"},{c:"43800",n:"단양군"}]},
+  "44":{"name":"충청남도","d":[{c:"44130",n:"천안시 동남구"},{c:"44131",n:"천안시 서북구"},{c:"44150",n:"공주시"},{c:"44180",n:"보령시"},{c:"44200",n:"아산시"},{c:"44210",n:"서산시"},{c:"44230",n:"논산시"},{c:"44250",n:"계룡시"},{c:"44270",n:"당진시"},{c:"44710",n:"금산군"},{c:"44760",n:"부여군"},{c:"44770",n:"서천군"},{c:"44790",n:"청양군"},{c:"44800",n:"홍성군"},{c:"44810",n:"예산군"},{c:"44825",n:"태안군"}]},
+  "45":{"name":"전북특별자치도","d":[{c:"45111",n:"전주시 완산구"},{c:"45113",n:"전주시 덕진구"},{c:"45130",n:"군산시"},{c:"45140",n:"익산시"},{c:"45180",n:"정읍시"},{c:"45190",n:"남원시"},{c:"45210",n:"김제시"},{c:"45710",n:"완주군"},{c:"45720",n:"진안군"},{c:"45730",n:"무주군"},{c:"45740",n:"장수군"},{c:"45750",n:"임실군"},{c:"45770",n:"순창군"},{c:"45790",n:"고창군"},{c:"45800",n:"부안군"}]},
+  "46":{"name":"전라남도","d":[{c:"46110",n:"목포시"},{c:"46130",n:"여수시"},{c:"46150",n:"순천시"},{c:"46170",n:"나주시"},{c:"46230",n:"광양시"},{c:"46710",n:"담양군"},{c:"46720",n:"곡성군"},{c:"46730",n:"구례군"},{c:"46770",n:"고흥군"},{c:"46780",n:"보성군"},{c:"46790",n:"화순군"},{c:"46800",n:"장흥군"},{c:"46810",n:"강진군"},{c:"46820",n:"해남군"},{c:"46830",n:"영암군"},{c:"46840",n:"무안군"},{c:"46860",n:"함평군"},{c:"46870",n:"영광군"},{c:"46880",n:"장성군"},{c:"46890",n:"완도군"},{c:"46900",n:"진도군"},{c:"46910",n:"신안군"}]},
+  "47":{"name":"경상북도","d":[{c:"47110",n:"포항시 남구"},{c:"47111",n:"포항시 북구"},{c:"47130",n:"경주시"},{c:"47150",n:"김천시"},{c:"47170",n:"안동시"},{c:"47190",n:"구미시"},{c:"47210",n:"영주시"},{c:"47230",n:"영천시"},{c:"47250",n:"상주시"},{c:"47280",n:"문경시"},{c:"47290",n:"경산시"},{c:"47730",n:"의성군"},{c:"47750",n:"청송군"},{c:"47760",n:"영양군"},{c:"47770",n:"영덕군"},{c:"47820",n:"청도군"},{c:"47830",n:"고령군"},{c:"47840",n:"성주군"},{c:"47850",n:"칠곡군"},{c:"47900",n:"예천군"},{c:"47920",n:"봉화군"},{c:"47930",n:"울진군"},{c:"47940",n:"울릉군"}]},
+  "48":{"name":"경상남도","d":[{c:"48121",n:"창원시 의창구"},{c:"48123",n:"창원시 성산구"},{c:"48125",n:"창원시 마산합포구"},{c:"48127",n:"창원시 마산회원구"},{c:"48129",n:"창원시 진해구"},{c:"48170",n:"진주시"},{c:"48220",n:"통영시"},{c:"48240",n:"사천시"},{c:"48250",n:"김해시"},{c:"48270",n:"밀양시"},{c:"48310",n:"거제시"},{c:"48330",n:"양산시"},{c:"48720",n:"의령군"},{c:"48730",n:"함안군"},{c:"48740",n:"창녕군"},{c:"48820",n:"고성군"},{c:"48840",n:"남해군"},{c:"48850",n:"하동군"},{c:"48860",n:"산청군"},{c:"48870",n:"함양군"},{c:"48880",n:"거창군"},{c:"48890",n:"합천군"}]},
+  "50":{"name":"제주특별자치도","d":[{c:"50110",n:"제주시"},{c:"50130",n:"서귀포시"}]}
+};
+
+const PURPS_LIST = [
+  {c:"01000",n:"단독주택"},{c:"02000",n:"공동주택"},{c:"03000",n:"제1종 근린생활시설"},
+  {c:"04000",n:"제2종 근린생활시설"},{c:"05000",n:"문화 및 집회시설"},{c:"06000",n:"종교시설"},
+  {c:"07000",n:"판매시설"},{c:"08000",n:"운수시설"},{c:"09000",n:"의료시설"},
+  {c:"10000",n:"교육연구시설"},{c:"11000",n:"노유자시설"},{c:"12000",n:"수련시설"},
+  {c:"13000",n:"운동시설"},{c:"14000",n:"업무시설"},{c:"15000",n:"숙박시설"},
+  {c:"17000",n:"공장"},{c:"18000",n:"창고시설"},{c:"20000",n:"자동차 관련 시설"},
+  {c:"27000",n:"관광 휴게시설"},{c:"28000",n:"장례시설"}
+];
+
+const ARCH_GB_LIST = [
+  {c:"01",n:"신축"},{c:"02",n:"증축"},{c:"03",n:"개축"},
+  {c:"04",n:"재축"},{c:"05",n:"이전"},{c:"06",n:"대수선"},
+  {c:"07",n:"용도변경"},{c:"08",n:"가설건축물"}
+];
+
+// ───────────────────────────────────────────
+// 상태
+// ───────────────────────────────────────────
+let allData = [];
+let sortKey = 'stcnsSchedYmd';
+let sortDir = 'desc';
+let isFavMode = false;
+let favorites = {};
+
+try { favorites = JSON.parse(localStorage.getItem('cs_favorites') || '{}'); } catch(e) {}
+
+// ───────────────────────────────────────────
+// 초기화
+// ───────────────────────────────────────────
+(function init() {
+  // 시/도 셀렉트
+  const sido = document.getElementById('sidoSelect');
+  Object.entries(REGIONS).forEach(([code, r]) => {
+    sido.insertAdjacentHTML('beforeend', `<option value="${code}">${r.name}</option>`);
+  });
+
+  // 주용도 드롭다운
+  const purpsDD = document.getElementById('purpsDD');
+  PURPS_LIST.forEach(p => {
+    purpsDD.insertAdjacentHTML('beforeend',
+      `<label class="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm">
+        <input type="checkbox" value="${p.c}" class="purps-cb accent-blue-600"> ${p.n}
+      </label>`
+    );
+  });
+
+  // 허가구분 드롭다운
+  const archDD = document.getElementById('archGbDD');
+  ARCH_GB_LIST.forEach(a => {
+    archDD.insertAdjacentHTML('beforeend',
+      `<label class="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm">
+        <input type="checkbox" value="${a.c}" class="arch-cb accent-blue-600"> ${a.n}
+      </label>`
+    );
+  });
+
+  // 체크박스 라벨 갱신
+  document.querySelectorAll('.purps-cb').forEach(cb => cb.addEventListener('change', () => updateDropLabel('purps')));
+  document.querySelectorAll('.arch-cb').forEach(cb => cb.addEventListener('change', () => updateDropLabel('arch')));
+
+  // 날짜 기본값
+  const today = new Date();
+  const plus3 = new Date(); plus3.setMonth(plus3.getMonth() + 3);
+  document.getElementById('startDate').value = fmtDateInput(today);
+  document.getElementById('endDate').value = fmtDateInput(plus3);
+
+  // 테이블 헤더 정렬 이벤트
+  document.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const k = th.dataset.key;
+      if (sortKey === k) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+      else { sortKey = k; sortDir = 'asc'; }
+      document.querySelectorAll('th.sortable').forEach(t => t.classList.remove('sort-asc','sort-desc','sort-active'));
+      th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc', 'sort-active');
+      renderTable(isFavMode ? Object.values(favorites) : allData);
+    });
+  });
+
+  // 드롭다운 외부 클릭 닫기
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#purpsWrap')) document.getElementById('purpsDD').classList.add('hidden');
+    if (!e.target.closest('#archGbWrap')) document.getElementById('archGbDD').classList.add('hidden');
+  });
+
+  // API 키 로드
+  const key = localStorage.getItem('cs_apiKey');
+  if (key) document.getElementById('apiKeyInput').value = key;
+  else setTimeout(openSettings, 400);
+})();
+
+function fmtDateInput(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+function onSidoChange() {
+  const code = document.getElementById('sidoSelect').value;
+  const sel = document.getElementById('sigunguSelect');
+  sel.innerHTML = '<option value="">전체 시/군/구</option>';
+  if (code && REGIONS[code]) {
+    REGIONS[code].d.forEach(d => sel.insertAdjacentHTML('beforeend', `<option value="${d.c}">${d.n}</option>`));
+  }
+}
+
+function toggleDD(id) {
+  document.getElementById(id).classList.toggle('hidden');
+}
+
+function updateDropLabel(type) {
+  if (type === 'purps') {
+    const checked = [...document.querySelectorAll('.purps-cb:checked')];
+    const labels = checked.map(cb => cb.closest('label').textContent.trim());
+    const el = document.getElementById('purpsLabel');
+    el.textContent = labels.length ? (labels.slice(0,2).join(', ') + (labels.length > 2 ? ` 외 ${labels.length-2}` : '')) : '전체';
+    el.className = labels.length ? 'text-gray-800 truncate' : 'text-gray-400 truncate';
+  } else {
+    const checked = [...document.querySelectorAll('.arch-cb:checked')];
+    const labels = checked.map(cb => cb.closest('label').textContent.trim());
+    const el = document.getElementById('archGbLabel');
+    el.textContent = labels.length ? labels.join(', ') : '전체';
+    el.className = labels.length ? 'text-gray-800 truncate' : 'text-gray-400 truncate';
+  }
+}
+
+function resetFilters() {
+  document.getElementById('sidoSelect').value = '';
+  document.getElementById('sigunguSelect').innerHTML = '<option value="">전체 시/군/구</option>';
+  document.getElementById('minArea').value = '';
+  document.getElementById('maxArea').value = '';
+  document.querySelectorAll('.purps-cb, .arch-cb').forEach(cb => { cb.checked = false; });
+  updateDropLabel('purps'); updateDropLabel('arch');
+  const today = new Date(); const plus3 = new Date(); plus3.setMonth(plus3.getMonth() + 3);
+  document.getElementById('startDate').value = fmtDateInput(today);
+  document.getElementById('endDate').value = fmtDateInput(plus3);
+}
+
+// ───────────────────────────────────────────
+// 설정
+// ───────────────────────────────────────────
+function openSettings() { document.getElementById('settingsModal').classList.remove('hidden'); }
+function closeSettings() { document.getElementById('settingsModal').classList.add('hidden'); }
+function saveApiKey() {
+  const k = document.getElementById('apiKeyInput').value.trim();
+  if (!k) { alert('API 키를 입력해주세요.'); return; }
+  localStorage.setItem('cs_apiKey', k);
+  closeSettings();
+  alert('저장되었습니다.');
+}
+
+// ───────────────────────────────────────────
+// 검색
+// ───────────────────────────────────────────
+async function doSearch() {
+  const apiKey = localStorage.getItem('cs_apiKey');
+  if (!apiKey) { openSettings(); return; }
+
+  const sidoCode = document.getElementById('sidoSelect').value;
+  if (!sidoCode) { alert('시/도를 선택해주세요.'); return; }
+
+  const sigunguCode = document.getElementById('sigunguSelect').value;
+  let cds = sigunguCode ? [sigunguCode] : REGIONS[sidoCode].d.map(d => d.c);
+
+  if (cds.length > 10) {
+    const ok = confirm(`선택한 지역에 시/군/구가 ${cds.length}개입니다. 검색에 시간이 걸릴 수 있습니다. 계속할까요?`);
+    if (!ok) return;
+    cds = cds.slice(0, 10);
+  }
+
+  isFavMode = false;
+  document.getElementById('favToggleBtn').classList.remove('bg-yellow-50', 'border-yellow-400', 'text-yellow-700');
+
+  setUI('loading', `${REGIONS[sidoCode].name} 데이터 조회 중... (${cds.length}개 지역)`);
+
+  const params = new URLSearchParams({
+    apiKey,
+    sigunguCds: cds.join(','),
+    startDate: document.getElementById('startDate').value,
+    endDate: document.getElementById('endDate').value,
+    minArea: document.getElementById('minArea').value,
+    maxArea: document.getElementById('maxArea').value,
+    mainPurps: [...document.querySelectorAll('.purps-cb:checked')].map(c => c.value).join(','),
+    archGb: [...document.querySelectorAll('.arch-cb:checked')].map(c => c.value).join(','),
+  });
+
+  try {
+    const res = await fetch(`/api/search?${params}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (!json.success) { setUI('error', json.error || '오류가 발생했습니다.'); return; }
+
+    allData = json.items || [];
+    document.getElementById('resultTitle').textContent = '검색 결과';
+    document.getElementById('resultInfo').textContent = `총 ${allData.length.toLocaleString()}건`;
+    document.getElementById('excelBtn').classList.remove('hidden');
+    renderTable(allData);
+    setUI('table');
+  } catch(e) {
+    setUI('error', `서버 오류: ${e.message}. API 키와 네트워크 연결을 확인해주세요.`);
+  }
+}
+
+function setUI(state, msg='') {
+  ['loadingDiv','errorDiv','emptyDiv','tableWrap'].forEach(id => document.getElementById(id).classList.add('hidden'));
+  document.getElementById('loadingMsg').textContent = msg;
+  if (state === 'loading') document.getElementById('loadingDiv').classList.remove('hidden');
+  else if (state === 'error') { document.getElementById('errorMsg').textContent = msg; document.getElementById('errorDiv').classList.remove('hidden'); }
+  else if (state === 'empty') document.getElementById('emptyDiv').classList.remove('hidden');
+  else if (state === 'table') document.getElementById('tableWrap').classList.remove('hidden');
+}
+
+// ───────────────────────────────────────────
+// 테이블 렌더링
+// ───────────────────────────────────────────
+function renderTable(data) {
+  if (!data || data.length === 0) { setUI('empty'); return; }
+
+  const sorted = [...data].sort((a, b) => {
+    let va = a[sortKey] ?? '';
+    let vb = b[sortKey] ?? '';
+    if (sortKey === 'totArea') { va = parseFloat(va)||0; vb = parseFloat(vb)||0; }
+    if (va < vb) return sortDir === 'asc' ? -1 : 1;
+    if (va > vb) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  const tbody = document.getElementById('tableBody');
+  tbody.innerHTML = '';
+
+  sorted.forEach(item => {
+    const id = item.mgrBldrgstPk || `${item.bldNm||''}${item.platPlc||''}`;
+    const isFav = !!favorites[id];
+    const tr = document.createElement('tr');
+    tr.className = 'hover:bg-slate-50 transition-colors group';
+    tr.dataset.id = id;
+    tr.dataset.item = JSON.stringify(item);
+    tr.innerHTML = `
+      <td class="px-3 py-2.5 text-center">
+        <button class="fav-btn text-xl leading-none ${isFav?'text-yellow-400':'text-gray-200 group-hover:text-gray-300'} hover:text-yellow-400 transition-colors" data-id="${esc(id)}">${isFav?'★':'☆'}</button>
+      </td>
+      <td class="px-3 py-2.5 font-medium text-gray-800">${esc(item.bldNm||'-')}</td>
+      <td class="px-3 py-2.5 text-gray-500 max-w-xs" title="${esc(item.platPlc||'')}">
+        <span class="block truncate max-w-xs">${esc(item.platPlc||'-')}</span>
+      </td>
+      <td class="px-3 py-2.5 text-center font-medium ${dateColor(item.stcnsSchedYmd)}">${fmtDate(item.stcnsSchedYmd)}</td>
+      <td class="px-3 py-2.5 text-center text-gray-500">${fmtDate(item.archPermYmd)}</td>
+      <td class="px-3 py-2.5 text-center text-gray-500">${fmtDate(item.useAprYmd)}</td>
+      <td class="px-3 py-2.5 text-center"><span class="px-2 py-0.5 rounded-full text-xs font-medium ${archGbStyle(item.archGbCdNm)}">${esc(item.archGbCdNm||'-')}</span></td>
+      <td class="px-3 py-2.5 text-gray-700">${esc(item.mainPurpsCdNm||'-')}</td>
+      <td class="px-3 py-2.5 text-right text-gray-700">${fmtArea(item.totArea)}</td>
+      <td class="px-3 py-2.5 text-gray-500">${esc(item.mainStrctCdNm||'-')}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // 즐겨찾기 버튼 이벤트
+  tbody.querySelectorAll('.fav-btn').forEach(btn => {
+    btn.addEventListener('click', () => toggleFav(btn));
+  });
+
+  document.getElementById('pageInfo').textContent = `총 ${sorted.length.toLocaleString()}건 표시 중`;
+  setUI('table');
+}
+
+// ───────────────────────────────────────────
+// 즐겨찾기
+// ───────────────────────────────────────────
+function toggleFav(btn) {
+  const tr = btn.closest('tr');
+  const id = tr.dataset.id;
+  const item = JSON.parse(tr.dataset.item);
+  if (favorites[id]) {
+    delete favorites[id];
+    btn.textContent = '☆';
+    btn.className = btn.className.replace('text-yellow-400','text-gray-200 group-hover:text-gray-300');
+  } else {
+    favorites[id] = item;
+    btn.textContent = '★';
+    btn.className = btn.className.replace('text-gray-200 group-hover:text-gray-300','text-yellow-400');
+  }
+  localStorage.setItem('cs_favorites', JSON.stringify(favorites));
+}
+
+function toggleFavView() {
+  isFavMode = !isFavMode;
+  const btn = document.getElementById('favToggleBtn');
+  if (isFavMode) {
+    btn.classList.add('bg-yellow-50','border-yellow-400','text-yellow-700');
+    const favData = Object.values(favorites);
+    document.getElementById('resultTitle').textContent = '⭐ 즐겨찾기';
+    document.getElementById('resultInfo').textContent = `총 ${favData.length}건`;
+    document.getElementById('excelBtn').classList.remove('hidden');
+    renderTable(favData);
+    setUI('table');
+  } else {
+    btn.classList.remove('bg-yellow-50','border-yellow-400','text-yellow-700');
+    document.getElementById('resultTitle').textContent = '검색 결과';
+    document.getElementById('resultInfo').textContent = `총 ${allData.length.toLocaleString()}건`;
+    renderTable(allData);
+  }
+}
+
+// ───────────────────────────────────────────
+// 엑셀 내보내기
+// ───────────────────────────────────────────
+function exportExcel() {
+  const data = isFavMode ? Object.values(favorites) : allData;
+  if (!data.length) { alert('내보낼 데이터가 없습니다.'); return; }
+
+  const rows = data.map(i => ({
+    '건물명': i.bldNm||'',
+    '주소': i.platPlc||'',
+    '착공예정일': fmtDate(i.stcnsSchedYmd),
+    '건축허가일': fmtDate(i.archPermYmd),
+    '사용승인일': fmtDate(i.useAprYmd),
+    '허가구분': i.archGbCdNm||'',
+    '주용도': i.mainPurpsCdNm||'',
+    '연면적(㎡)': i.totArea ? parseFloat(i.totArea) : '',
+    '대지면적(㎡)': i.platArea ? parseFloat(i.platArea) : '',
+    '건폐율(%)': i.bcRat||'',
+    '용적률(%)': i.vlRat||'',
+    '세대수': i.hhldCnt||'',
+    '주구조': i.mainStrctCdNm||'',
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '건설현장');
+  XLSX.writeFile(wb, `건설현장조회_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+// ───────────────────────────────────────────
+// 유틸
+// ───────────────────────────────────────────
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function fmtDate(ymd) {
+  if (!ymd) return '-';
+  const s = String(ymd).replace(/-/g,'');
+  if (s.length !== 8) return String(ymd);
+  return `${s.slice(0,4)}.${s.slice(4,6)}.${s.slice(6,8)}`;
+}
+function fmtArea(v) {
+  if (!v) return '-';
+  return parseFloat(v).toLocaleString('ko-KR',{maximumFractionDigits:1}) + ' ㎡';
+}
+function dateColor(ymd) {
+  if (!ymd) return 'text-gray-400';
+  const d = String(ymd).replace(/-/g,'');
+  const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
+  if (d < today) return 'text-red-400';
+  const near = new Date(); near.setMonth(near.getMonth()+3);
+  if (d <= near.toISOString().slice(0,10).replace(/-/g,'')) return 'text-emerald-600';
+  return 'text-blue-600';
+}
+function archGbStyle(n) {
+  return ({신축:'bg-blue-100 text-blue-700',증축:'bg-emerald-100 text-emerald-700',개축:'bg-amber-100 text-amber-700',재축:'bg-orange-100 text-orange-700',대수선:'bg-purple-100 text-purple-700'})[n] || 'bg-gray-100 text-gray-600';
+}
+</script>
+</body>
+</html>
